@@ -5,6 +5,7 @@ import type {
 } from "@earendil-works/pi-ai";
 
 import { structuredFailure, type FailureClassification } from './failure-classifier.js';
+import { isAntigravityQuotaBanner, isPotentialAntigravityQuotaBanner } from './antigravity-quota.js';
 export type RelayProviderStreamResult =
   | { ok: true }
   | { ok: false; error: string; aborted: boolean; committed: boolean; details?: FailureClassification };
@@ -122,11 +123,16 @@ export async function relayProviderStream(
   options: SimpleStreamOptions | undefined,
   timeoutMs: number,
   onCommit: () => void,
+  upstreamProvider?: string,
 ): Promise<RelayProviderStreamResult> {
   const iterator = stream[Symbol.asyncIterator]();
   const bufferedEvents: AssistantMessageEvent[] = [];
   let committed = false;
   let terminalPushed = false;
+  // Only Antigravity's first text block is screened. Normal text is forwarded
+  // on its first nonmatching delta, preserving ordinary streaming latency.
+  let screeningQuota = upstreamProvider === 'antigravity';
+  let firstText = '';
 
   try {
     while (true) {
@@ -143,6 +149,39 @@ export async function relayProviderStream(
       if (failure) {
         const source = (event as any).error;
         throw Object.assign(new Error(failure), { status: source?.status, code: source?.code, headers: source?.headers });
+      }
+
+      if (!committed && screeningQuota) {
+        if (event.type === 'text_delta') {
+          firstText += event.delta || '';
+          if (isAntigravityQuotaBanner(firstText)) {
+            throw new Error(firstText);
+          }
+          if (firstText.length <= 1024 && isPotentialAntigravityQuotaBanner(firstText)) {
+            bufferedEvents.push(event);
+            continue;
+          }
+          screeningQuota = false;
+        } else if (event.type === 'text_end') {
+          firstText ||= event.content || '';
+          if (isAntigravityQuotaBanner(firstText)) {
+            throw new Error(firstText);
+          }
+          if (firstText.length <= 1024 && isPotentialAntigravityQuotaBanner(firstText)) {
+            bufferedEvents.push(event);
+            continue;
+          }
+          screeningQuota = false;
+        } else if (event.type === 'done') {
+          const finalText = firstText || (event.message.content || [])
+            .filter((block: any) => block.type === 'text')
+            .map((block: any) => block.text)
+            .join('');
+          if (isAntigravityQuotaBanner(finalText, true)) {
+            throw new Error(finalText);
+          }
+          screeningQuota = false;
+        }
       }
 
       if (!committed) {

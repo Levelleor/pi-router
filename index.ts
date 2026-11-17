@@ -38,7 +38,6 @@ import {
   createLinkedAbortController,
   getRouterTimeoutMs as resolveRouterTimeoutMs,
   getStreamEventFailure,
-  isAbortError,
   isAbortSignalAborted,
   registerProviderStreamAborter,
   relayProviderStream as relayStream,
@@ -5390,7 +5389,9 @@ function forwardToProvider(
       eventStream.end();
     } catch (err) {
       const error = getErrorMessage(err);
-      const stopReason = isAbortError(error) || linkedAbort.controller.signal.aborted ? "aborted" : "error";
+      // Provider-reported aborts are ordinary upstream failures unless the
+      // caller's linked signal was actually cancelled.
+      const stopReason = linkedAbort.controller.signal.aborted ? "aborted" : "error";
       debugLog(`[pi-router] Upstream ${model.id}@${model.provider} failed:`, err);
       eventStream.push(createRouterErrorEvent(model.id, model.provider, realModel.api, error, stopReason));
       eventStream.end();

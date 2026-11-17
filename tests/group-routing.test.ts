@@ -33,6 +33,33 @@ describe('bounded group orchestration', () => {
     expect(events.at(-1).error.errorMessage).toMatch(/plan exhausted/);
     expect(state.lastFailures.has('first')).toBe(true);expect(state.lastFailures.has('plan')).toBe(false);
   });
+  it('fails over on an Antigravity quota notice before committing its first text delta', async () => {
+    const notice = '⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 153h38m14s.';
+    const c: any = config();
+    c.models[0] = { id: 'first', channels: ['antigravity'], modelByChannel: { antigravity: 'a' } };
+    c.models[1] = { id: 'second', channels: ['google'], modelByChannel: { google: 'c' } };
+    const g = { ...group, failoverBudget: { maxAttempts: 4, maxTotalWaitMs: 120000, respectRetryAfter: true } };
+    c.groups = [g];
+    const modelMap = buildModelMap([leaf('a', 'antigravity'), leaf('c', 'google')] as any);
+    behavior = (id, stream, model) => {
+      if (id !== 'a') { success(stream, model); return; }
+      const partial = message(model, [{ type: 'text', text: notice }]);
+      stream.push({ type: 'start', partial });
+      stream.push({ type: 'text_start', contentIndex: 0, partial });
+      for (let i = 0; i < notice.length; i += 5)
+        stream.push({ type: 'text_delta', contentIndex: 0, delta: notice.slice(i, i + 5), partial });
+      stream.push({ type: 'text_end', contentIndex: 0, content: notice, partial });
+      stream.push({ type: 'done', reason: 'stop', message: partial });
+      stream.end();
+    };
+    const events = await run(g, c, undefined, { messages: [] }, modelMap);
+    expect(calls).toEqual(['a', 'c']);
+    expect(events.at(-1)?.type).toBe('done');
+    expect(events.some(event => event.type === 'text_delta' && event.delta?.includes('quota reached'))).toBe(false);
+    expect(state.lastFailures.get('first')?.at(-1)?.classification.kind).toBe('quota-exhausted');
+    const cooldown = state.cooldowns.get('first@antigravity#a')!;
+    expect(cooldown).toBeGreaterThan(Date.now() + 152 * 3600000);
+  });
   it('shares a single attempts budget across members', async () => {
     const events=await run({...group,failoverBudget:{maxAttempts:2}}); expect(calls).toEqual(['a','b']);expect(events.at(-1).error.errorMessage).toMatch(/maximum attempts/);
   });

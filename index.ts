@@ -4444,7 +4444,8 @@ async function executeRouteAttempt(params: ExecuteRouteAttemptParams): Promise<R
     getCooldownEnd: (stateModelId, routeKey) => getRouterState().cooldowns.get(getRouteStateKey(stateModelId, routeKey)),
     canAttempt: canAttemptChannel,
     forward: forwardToProvider,
-    relay: relayProviderStream,
+    relay: (stream, outputStream, options, config, onCommit) =>
+      relayProviderStream(stream, outputStream, options, config, onCommit, params.route.model.provider),
     recordLatency,
     recordFailure,
     updateHealth: updateHealthStatus,
@@ -5104,9 +5105,10 @@ async function relayProviderStream(
   outputStream: AssistantMessageEventStream,
   options: SimpleStreamOptions | undefined,
   config: RouterConfig | undefined,
-  onCommit: () => void
+  onCommit: () => void,
+  upstreamProvider?: string,
 ): Promise<RelayProviderStreamResult> {
-  return relayStream(stream, outputStream, options, getRouterTimeoutMs(options, config), onCommit);
+  return relayStream(stream, outputStream, options, getRouterTimeoutMs(options, config), onCommit, upstreamProvider);
 }
 
 function getErrorMessage(error: unknown): string {

@@ -1,3 +1,5 @@
+import { antigravityQuotaResetSeconds } from './antigravity-quota.js';
+
 export type FailureKind =
   | "transient-auth"
   | "network"
@@ -20,18 +22,28 @@ export type FailureClassification = {
 /** Only structured provider fields are accepted as reset hints; never infer balances from usage. */
 export function structuredFailure(error: unknown, now = Date.now()): FailureClassification {
   const e = error as any;
-  const base = classifyFailure(typeof error === 'string' ? error : e?.message ?? String(error));
+  const message = typeof error === 'string' ? error : e?.message ?? String(error);
+  const base = classifyFailure(message);
   const status = Number(e?.status ?? e?.statusCode);
   const raw = e?.headers?.get?.('retry-after') ?? e?.headers?.['retry-after'];
   const seconds = typeof raw === 'string' && /^\\d+(?:\\.\\d+)?$/.test(raw) ? Number(raw) : undefined;
   const date = typeof raw === 'string' ? Date.parse(raw) : NaN;
   const retryAt = seconds !== undefined ? now + seconds * 1000 : date;
+  // An Antigravity CLI quota banner reports an explicit reset interval inside
+  // the message rather than in HTTP headers. Honour it only if the caller
+  // enables respectRetryAfter, via the existing route cooldown mechanism.
+  const quotaResetSeconds = base.kind === 'quota-exhausted'
+    ? antigravityQuotaResetSeconds(message)
+    : undefined;
+  const effectiveRetryAt = quotaResetSeconds !== undefined ? now + quotaResetSeconds * 1000 : retryAt;
   const code = e?.code ?? e?.error?.code;
   return { ...base,
     ...(code === 'insufficient_quota' ? { kind: 'quota-exhausted' as const, retryable: false } : {}),
     ...(code === 'insufficient_credits' ? { kind: 'credit-exhausted' as const, retryable: false } : {}),
     ...(Number.isInteger(status) && status >= 100 && status <= 599 ? {status} : {}),
-    ...(Number.isFinite(retryAt) && retryAt > now ? {retryAt: Math.min(retryAt,now + 86400000)} : {}),
+    ...(Number.isFinite(effectiveRetryAt) && effectiveRetryAt > now
+      ? {retryAt: quotaResetSeconds === undefined ? Math.min(effectiveRetryAt, now + 86400000) : effectiveRetryAt}
+      : {}),
   };
 }
 
@@ -69,7 +81,7 @@ export function classifyFailure(error: string): FailureClassification {
     return { kind: "auth", retryable: false };
   }
 
-  if (/insufficient_quota|quota exhausted|usage limit reached/i.test(text)) return {kind:'quota-exhausted',retryable:false};
+  if (/insufficient_quota|quota exhausted|usage limit reached|individual quota reached/i.test(text)) return {kind:'quota-exhausted',retryable:false};
   if (/insufficient_credits|credit balance.*(?:low|exhausted)|insufficient balance/i.test(text)) return {kind:'credit-exhausted',retryable:false};
 
   if (

@@ -87,6 +87,32 @@ Groups advertise conservative common known capabilities, then check every actual
 
 See [complete example](./examples/router-groups.config.json). Its upstream ids use the full provider/model format (provider names are placeholders - substitute your own registered providers and models); they were not probed for availability, quality, tools or price. Configure matching real providers and explicit member models before using it. Full/order wizards and saves preserve groups; sync retains referenced offline models and skips reserved group-name imports.
 
+### Antigravity CLI quota warnings
+
+The `antigravity` provider from [pi-antigravity-bridge](https://github.com/EstebanForge/pi-extensions/tree/main/packages/pi-antigravity-bridge) can stream an exhausted-subscription notice as ordinary assistant text:
+
+```text
+⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 153h38m14s.
+```
+
+For the **registered provider id `antigravity` only**, pi-router now holds an initial candidate quota banner until it can distinguish that exact notice from ordinary generated text. If the quota notice matches, no content is committed, and normal group/channel failover proceeds. Ordinary Antigravity text responses retain streaming; this change does not attempt to reinterpret model-written discussion of quotas or retry a response after productive output has already been committed.
+
+The explicit reset duration is parsed into a retry-after timestamp. To hold the exhausted route in cooldown until that time, opt into existing retry-after handling on the group:
+
+```json
+{
+  "id": "coding-low",
+  "failoverBudget": {
+    "maxAttempts": 4,
+    "maxTotalWaitMs": 120000,
+    "respectRetryAfter": true
+  },
+  "members": ["router/your-antigravity-model", "router/your-backup-model"]
+}
+```
+
+Cooldowns live in router process state. They are not a durable, cross-process subscription-quota database, and restarting Pi may clear them.
+
 ## Quick Start
 
 ### 1. Install

@@ -5,7 +5,6 @@ import type {
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import {
-  isAbortError,
   isAbortSignalAborted,
   type RelayProviderStreamResult,
 } from "./stream-relay.js";
@@ -95,7 +94,8 @@ export async function executeRouteAttempt<TModel, TModelConfig, TConfig>(
     stream = deps.forward(route.model, context, options, config, virtualModelId);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    const aborted = isAbortError(error) || isAbortSignalAborted(options);
+    // A provider-generated AbortError is a failed attempt, not a caller cancel.
+    const aborted = isAbortSignalAborted(options);
     if (aborted) {
       deps.releaseCircuit(stateModelId, routeKey);
     } else {

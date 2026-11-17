@@ -10,7 +10,7 @@ let calls: string[];
 let efforts: Array<{ model: string; reasoning: unknown }>;
 let behavior: (id:string, stream:any, model:any) => void;
 const message = (model:any, content:any[] = []) => ({ role:'assistant',content,api:model.api,provider:model.provider,model:model.id,usage:{input:0,output:1,cacheRead:0,cacheWrite:0,totalTokens:1,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now() });
-const fail = (s:any,m:any) => {s.push({type:'error',reason:'error',error:{...message(m),stopReason:'error',errorMessage:'Connection error.'}});s.end();};
+const fail = (s:any,m:any,errorMessage = 'Connection error.') => {s.push({type:'error',reason:'error',error:{...message(m),stopReason:'error',errorMessage}});s.end();};
 const success = (s:any,m:any) => {s.push({type:'done',reason:'stop',message:message(m,[{type:'text',text:'ok'}])});s.end();};
 const map = () => buildModelMap(['a','b','c','d'].map(id => leaf(id)) as any);
 const run = async (g:any = group, c:any = config(), options?:any, context:any = {messages:[]}, modelMap:any = map()) => __testRunWithRouterState(state,async () => {
@@ -39,6 +39,33 @@ describe('bounded group orchestration', () => {
   it('keeps a bounded total deadline and stops after timeout', async () => {
     behavior=() => {};
     const events=await run({...group,failoverBudget:{maxTotalWaitMs:20}});expect(calls).toEqual(['a']);expect(events.at(-1).type).toBe('error');
+  });
+  it('falls back after an uncommitted provider-reported Operation aborted', async () => {
+    behavior = (id, stream, model) => id === 'c' ? success(stream, model) : fail(stream, model, 'Operation aborted');
+    const events = await run();
+    expect(calls).toEqual(['a', 'b', 'c']);
+    expect(events.at(-1)?.type).toBe('done');
+  });
+  it('falls back when the first provider stalls until its per-attempt timeout', async () => {
+    behavior = (id, stream, model) => {
+      if (id === 'a') return; // Simulates a provider that never sends its first event.
+      success(stream, model);
+    };
+    const c: any = config();
+    c.request = { timeoutMs: 20 };
+    const events = await run(group, c);
+    expect(calls).toEqual(['a', 'b']);
+    expect(events.at(-1)?.type).toBe('done');
+  });
+  it('still stops on an actual caller cancellation, even with a provider abort error', async () => {
+    const controller = new AbortController();
+    behavior = (_id, stream, model) => {
+      controller.abort();
+      fail(stream, model, 'Operation aborted');
+    };
+    const events = await run(group, config(), { signal: controller.signal });
+    expect(calls).toEqual(['a']);
+    expect(events.at(-1)?.reason).toBe('aborted');
   });
   it('cooldown skips do not count as attempts', async () => {
     state.cooldowns.set('first@p#a',Date.now()+100000);

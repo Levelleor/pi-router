@@ -38,6 +38,7 @@ import {
   createLinkedAbortController,
   getRouterTimeoutMs as resolveRouterTimeoutMs,
   getStreamEventFailure,
+  isAbortError,
   isAbortSignalAborted,
   registerProviderStreamAborter,
   relayProviderStream as relayStream,

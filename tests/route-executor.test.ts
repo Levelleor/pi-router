@@ -63,6 +63,37 @@ describe('route executor', () => {
     expect(forward).not.toHaveBeenCalled();
   });
 
+  it('treats a provider-thrown AbortError as recoverable without caller cancellation', async () => {
+    const recordFailure = vi.fn();
+    const releaseCircuit = vi.fn();
+    const result = await executeRouteAttempt(
+      {
+        stateModelId: 'm1',
+        route: { routeKey: 'provider-a', routeLabel: 'provider-a', model: { id: 'm1' } },
+        modelConfig: { id: 'm1' },
+        context: { messages: [] } as any,
+        options: undefined,
+        config: {},
+        outputStream: createAssistantMessageEventStream(),
+        virtualModelId: 'm1',
+      },
+      {
+        getCooldownEnd: () => undefined,
+        canAttempt: () => true,
+        forward: () => { throw new Error('Operation aborted'); },
+        relay: () => Promise.resolve({ ok: true }),
+        recordLatency: vi.fn(),
+        recordFailure,
+        updateHealth: vi.fn(),
+        recordCircuit: vi.fn(),
+        releaseCircuit,
+      },
+    );
+    expect(result).toEqual({ status: 'failed', error: 'Operation aborted', aborted: false, committed: false });
+    expect(recordFailure).toHaveBeenCalledTimes(1);
+    expect(releaseCircuit).not.toHaveBeenCalled();
+  });
+
   it('records first-token latency at commit and success health only after terminal completion', async () => {
     const output = createAssistantMessageEventStream();
     const recordLatency = vi.fn();

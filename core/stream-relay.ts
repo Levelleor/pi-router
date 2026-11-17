@@ -167,7 +167,10 @@ export async function relayProviderStream(
     return {
       ok: false,
       error,
-      aborted: isAbortError(error) || isAbortSignalAborted(options),
+      // An upstream provider can report "Operation aborted" after its own
+      // timeout/connection reset even when the caller never cancelled.
+      // Only the actual request signal authorises terminating the entire chain.
+      aborted: isAbortSignalAborted(options),
       committed,
       details: structuredFailure(err),
     };
